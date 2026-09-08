@@ -1,12 +1,17 @@
-# Squirrel Dice Showdown v9
+# Squirrel Dice Showdown v10
 
-Rebuild focused on actual game behavior and visible animation.
+Asset-heavy rebuild. This version embeds actual GLB models and 1024px texture maps directly into game.html so Streamlit cannot lose asset paths.
 
-- Independent dice trajectories, staggered starts, random spin axes, random bounce heights and landing times.
-- Upward-facing die face is explicitly the result; each die also has a numeric readout.
-- Score rows are entire tap targets, highlight green after a roll, commit the score, update totals, and advance turns.
-- Upper-section 35-point bonus implemented.
-- Three independently moving procedural 3D squirrels.
-- One squirrel runs across the scene on Acorn Raid and major scoring events.
-- Visible swaying trees.
-- Large animated waterfall, moving river and drifting mist.
+Assets embedded:
+- Detailed multi-part squirrel GLB (~269 KB)
+- Three detailed pine GLBs (~134 KB each)
+- Rock cluster GLB (~234 KB)
+- 1024px wood, bark, grass and water textures (~4 MB total)
+
+Game behavior:
+- Independent randomized die movement and landing times
+- Face-up result labels
+- Full-row tap scoring with upper bonus and totals
+- Imported 3D squirrels with animated named limbs/tail
+- Swaying imported pine models
+- Animated textured waterfall/river and mist
