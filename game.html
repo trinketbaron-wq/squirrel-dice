@@ -1,0 +1,295 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>
+:root{
+  --forest:#0b1b12;--panel:#153523;--panel2:#20482f;--cream:#fff7df;--gold:#ffc95a;
+  --brown:#7a4b2b;--muted:#c7d5c4;--red:#f17b66;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:transparent;color:var(--cream);font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif}
+body{padding:4px}
+button,input{font:inherit}
+button{touch-action:manipulation}
+.game{max-width:900px;margin:auto}
+.hero{
+  position:relative;overflow:hidden;border-radius:28px;padding:22px 18px 18px;text-align:center;
+  background:
+    radial-gradient(circle at 25% 0%,rgba(123,198,130,.32),transparent 32%),
+    linear-gradient(145deg,#1a4b2e,#102a1c 60%,#0b1d13);
+  border:1px solid rgba(255,255,255,.12);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 18px 40px rgba(0,0,0,.25)
+}
+.hero:before,.hero:after{content:"🌲";position:absolute;font-size:72px;opacity:.2;bottom:-20px}
+.hero:before{left:6px}.hero:after{right:6px;transform:scaleX(-1)}
+h1{font-size:clamp(30px,7vw,54px);line-height:.95;margin:2px 0 8px;letter-spacing:-1px}
+.tag{color:#e1eadf;margin:0}
+.panel{
+  margin-top:12px;padding:14px;border-radius:22px;
+  background:linear-gradient(180deg,rgba(26,65,42,.97),rgba(16,43,28,.97));
+  border:1px solid rgba(255,255,255,.1);box-shadow:0 12px 28px rgba(0,0,0,.2)
+}
+.row{display:flex;gap:9px;flex-wrap:wrap;align-items:center}
+.grow{flex:1;min-width:180px}
+input{
+  width:100%;min-height:46px;border-radius:13px;border:1px solid rgba(255,255,255,.16);
+  background:#0c2417;color:white;padding:10px 13px;font-size:16px
+}
+.btn{
+  min-height:46px;border:0;border-radius:14px;padding:10px 15px;font-weight:900;cursor:pointer;
+  background:var(--gold);color:#39270d;box-shadow:0 5px 0 #9b6b1d;
+}
+.btn:active:not(:disabled){transform:translateY(2px);box-shadow:0 3px 0 #9b6b1d}
+.btn.alt{background:#dcebdc;box-shadow:0 5px 0 #8ca58e}.btn.ghost{background:#315f40;color:white;box-shadow:0 5px 0 #183a25}
+.btn.red{background:var(--red);box-shadow:0 5px 0 #a84937}.btn:disabled{opacity:.42;cursor:not-allowed;box-shadow:none}
+.status{margin-top:10px;padding:10px 12px;border-radius:12px;background:#0c2417;color:#dce7dc;min-height:43px}
+.turn{text-align:center;font-weight:900;font-size:18px;color:var(--gold);margin-bottom:4px}
+.woodland{text-align:center;letter-spacing:7px;opacity:.78;margin:3px 0 8px}
+
+/* 3D CSS dice: each die is a real six-faced cube in perspective */
+.dice-stage{
+  perspective:900px;
+  display:grid;grid-template-columns:repeat(5,1fr);gap:12px;
+  padding:18px 4px 22px;align-items:center;
+}
+.die-wrap{
+  aspect-ratio:1;display:grid;place-items:center;border:0;background:transparent;padding:0;cursor:pointer;
+  min-width:0;
+}
+.cube{
+  --s:clamp(48px,13vw,92px);
+  width:var(--s);height:var(--s);position:relative;transform-style:preserve-3d;
+  transform:rotateX(-18deg) rotateY(28deg);
+  transition:transform .28s cubic-bezier(.2,.75,.2,1);
+}
+.die-wrap.held .cube{transform:translateY(-8px) rotateX(-18deg) rotateY(28deg) scale(1.06)}
+.face{
+  position:absolute;inset:0;border-radius:14px;
+  background:linear-gradient(145deg,#fffdf5,#e4d6b8);
+  border:1px solid rgba(87,61,34,.25);
+  box-shadow:inset 3px 3px 8px rgba(255,255,255,.9),inset -5px -7px 9px rgba(79,53,26,.15);
+  display:grid;grid-template:repeat(3,1fr)/repeat(3,1fr);padding:12%;backface-visibility:hidden
+}
+.front{transform:translateZ(calc(var(--s)/2))}
+.back{transform:rotateY(180deg) translateZ(calc(var(--s)/2))}
+.right{transform:rotateY(90deg) translateZ(calc(var(--s)/2))}
+.left{transform:rotateY(-90deg) translateZ(calc(var(--s)/2))}
+.top{transform:rotateX(90deg) translateZ(calc(var(--s)/2))}
+.bottom{transform:rotateX(-90deg) translateZ(calc(var(--s)/2))}
+.pip{width:24%;aspect-ratio:1;border-radius:50%;background:#2d2418;align-self:center;justify-self:center;box-shadow:inset 1px 2px 2px #0006}
+.held-ring{display:none;position:absolute;inset:-13px;border:4px solid var(--gold);border-radius:22px;transform:translateZ(-2px)}
+.die-wrap.held .held-ring{display:block}
+.hold-label{position:absolute;left:50%;bottom:-24px;transform:translateX(-50%);font-size:10px;font-weight:1000;color:var(--gold);display:none}
+.die-wrap.held .hold-label{display:block}
+.rolling .cube{animation:tumble .68s cubic-bezier(.2,.8,.2,1)}
+@keyframes tumble{
+  0%{transform:rotateX(-18deg) rotateY(28deg)}
+  35%{transform:rotateX(235deg) rotateY(170deg) scale(.83)}
+  70%{transform:rotateX(415deg) rotateY(345deg) scale(1.06)}
+  100%{transform:rotateX(702deg) rotateY(748deg)}
+}
+
+.score-head,.score-row{display:grid;grid-template-columns:minmax(128px,1.6fr) .65fr .65fr;gap:6px;align-items:center}
+.score-head{font-weight:900;color:var(--gold);font-size:13px;margin-bottom:5px}
+.score-head>div{text-align:center}.score-head>div:first-child{text-align:left}
+.score-row{margin:5px 0}
+.cat{
+  border:1px solid rgba(255,255,255,.1);background:linear-gradient(#2a5b3b,#214a31);
+  color:white;border-radius:11px;padding:8px 9px;text-align:left;min-height:47px;cursor:pointer
+}
+.cat:disabled{opacity:.62;cursor:default}
+.cat .possible{display:block;color:#ffe38f;font-size:11px;margin-top:2px}
+.cell{text-align:center;background:#0c2417;border-radius:10px;padding:10px 4px;font-weight:800;min-height:42px}
+.totals{display:flex;justify-content:space-between;gap:12px;margin-top:10px;font-weight:900;font-size:18px}
+.roll-zone{
+  margin-top:15px;padding-top:14px;border-top:1px dashed rgba(255,255,255,.18);
+  display:flex;gap:10px;justify-content:center;flex-wrap:wrap
+}
+.roll{font-size:19px;min-width:min(100%,290px);padding:12px 24px}
+.help{text-align:center;color:var(--muted);font-size:12px;margin:10px 0 0}
+
+.squirrel{position:fixed;z-index:999;pointer-events:none;filter:drop-shadow(0 6px 4px #0006)}
+.runner{font-size:50px;left:-90px;bottom:18px;animation:run 2.7s linear forwards}
+@keyframes run{to{transform:translateX(calc(100vw + 190px)) rotate(8deg)}}
+.popup{
+  left:50%;top:18%;transform:translateX(-50%);padding:12px 18px;border-radius:20px;background:#fff8df;color:#3c2913;
+  font-size:clamp(18px,5vw,28px);font-weight:1000;text-align:center;animation:pop 2s ease forwards
+}
+@keyframes pop{0%{opacity:0;transform:translateX(-50%) scale(.35) rotate(-8deg)}18%{opacity:1;transform:translateX(-50%) scale(1.08)}
+82%{opacity:1}100%{opacity:0;transform:translateX(-50%) scale(.92)}}
+.acorn{position:fixed;top:-35px;z-index:998;font-size:28px;pointer-events:none;animation:fall 2.1s linear forwards}
+@keyframes fall{to{transform:translateY(110vh) rotate(560deg);opacity:.75}}
+
+@media(max-width:560px){
+  body{padding:0}.hero,.panel{border-radius:18px}.panel{padding:11px}.dice-stage{gap:4px;padding-left:0;padding-right:0}
+  .cube{--s:clamp(48px,16vw,70px)}.face{border-radius:11px}.score-head,.score-row{grid-template-columns:1.35fr .62fr .62fr}
+}
+@media(prefers-reduced-motion:reduce){.rolling .cube,.runner,.popup,.acorn{animation-duration:.01ms!important}}
+</style>
+</head>
+<body>
+<div class="game">
+  <header class="hero">
+    <div style="font-size:40px">🐿️ 🌰 🎲</div>
+    <h1>Squirrel Dice<br>Showdown</h1>
+    <p class="tag">Roll hard. Hoard acorns. Rule the forest.</p>
+  </header>
+
+  <section class="panel">
+    <div class="row">
+      <div class="grow"><input id="name" value="Player 1" maxlength="22" aria-label="Your player name"></div>
+      <button class="btn" id="localBtn">Pass & Play</button>
+      <button class="btn alt" id="hostBtn">Create Room</button>
+    </div>
+    <div class="row" style="margin-top:9px">
+      <div class="grow"><input id="room" maxlength="24" placeholder="Room code" aria-label="Room code"></div>
+      <button class="btn ghost" id="joinBtn">Join Room</button>
+    </div>
+    <div class="status" id="status" aria-live="polite">Start Pass & Play, or create/join an online room.</div>
+  </section>
+
+  <section class="panel">
+    <div class="turn" id="turn">Start a game above.</div>
+    <div class="woodland">🌲 🌰 🐿️ 🌲 🌰</div>
+    <div class="dice-stage" id="dice"></div>
+    <p class="help">Tap a die to hold or release it between rolls.</p>
+  </section>
+
+  <section class="panel">
+    <div class="score-head"><div>Score category</div><div id="p0h">Player 1</div><div id="p1h">Player 2</div></div>
+    <div id="scores"></div>
+    <div class="totals"><span id="t0">Player 1: 0</span><span id="t1">Player 2: 0</span></div>
+
+    <div class="roll-zone">
+      <button class="btn roll" id="rollBtn" disabled>🎲 ROLL DICE</button>
+      <button class="btn ghost" id="attackBtn" disabled>🐿️ Squirrel Attack</button>
+      <button class="btn red" id="newBtn">New Game</button>
+    </div>
+    <p class="help">The roll control is intentionally below scoring so your thumb stays near the decision area.</p>
+  </section>
+</div>
+
+<script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
+<script>
+const cats=[
+ ["Ones","ones"],["Twos","twos"],["Threes","threes"],["Fours","fours"],["Fives","fives"],["Sixes","sixes"],
+ ["Three of a Kind","three"],["Four of a Kind","four"],["Full House","full"],["Small Straight","small"],
+ ["Large Straight","large"],["Yahtzee!","yahtzee"],["Chance","chance"]
+];
+let mode="none", myIndex=0, peer=null, conn=null;
+const blank=()=>({players:["Player 1","Player 2"],turn:0,rolls:0,dice:[1,1,1,1,1],held:[false,false,false,false,false],scores:[{},{}],started:false});
+let state=blank();
+
+const $=id=>document.getElementById(id);
+const nameEl=$("name"),roomEl=$("room"),statusEl=$("status"),diceEl=$("dice"),scoresEl=$("scores"),rollBtn=$("rollBtn");
+
+function canAct(){return state.started&&(mode==="local"||(mode==="online"&&state.turn===myIndex&&conn&&conn.open))}
+function counts(){const c=[0,0,0,0,0,0,0];state.dice.forEach(d=>c[d]++);return c}
+function scoreFor(k){
+ const c=counts(),sum=state.dice.reduce((a,b)=>a+b,0),uniq=[...new Set(state.dice)].sort((a,b)=>a-b).join("");
+ const upper=["ones","twos","threes","fours","fives","sixes"];
+ if(upper.includes(k)){const n=upper.indexOf(k)+1;return c[n]*n}
+ if(k==="three")return c.some(x=>x>=3)?sum:0;
+ if(k==="four")return c.some(x=>x>=4)?sum:0;
+ if(k==="full")return c.includes(3)&&c.includes(2)?25:0;
+ if(k==="small")return /1234|2345|3456/.test(uniq)?30:0;
+ if(k==="large")return uniq==="12345"||uniq==="23456"?40:0;
+ if(k==="yahtzee")return c.includes(5)?50:0;
+ return sum;
+}
+function total(p){return Object.values(state.scores[p]).reduce((a,b)=>a+b,0)}
+
+const pipMaps={
+  1:[5],2:[1,9],3:[1,5,9],4:[1,3,7,9],5:[1,3,5,7,9],6:[1,3,4,6,7,9]
+};
+function face(n,cls){
+ let dots="";for(let i=1;i<=9;i++)dots+=pipMaps[n].includes(i)?`<i class="pip" style="grid-area:${Math.ceil(i/3)}/${((i-1)%3)+1}"></i>`:"";
+ return `<div class="face ${cls}">${dots}</div>`;
+}
+function cubeHTML(v){
+ const vals=[v,7-v,((v)%6)+1,((v+2)%6)+1,((v+3)%6)+1,((v+4)%6)+1];
+ return `<div class="cube">${face(vals[0],"front")}${face(vals[1],"back")}${face(vals[2],"right")}${face(vals[3],"left")}${face(vals[4],"top")}${face(vals[5],"bottom")}<div class="held-ring"></div><div class="hold-label">HELD</div></div>`;
+}
+function drawDice(){
+ diceEl.innerHTML="";
+ state.dice.forEach((v,i)=>{
+  const b=document.createElement("button");b.type="button";b.className="die-wrap"+(state.held[i]?" held":"");b.innerHTML=cubeHTML(v);
+  b.disabled=!canAct()||state.rolls===0;b.setAttribute("aria-label",`Die ${i+1}: ${v}${state.held[i]?", held":""}`);
+  b.addEventListener("click",()=>{if(!canAct()||state.rolls===0)return;state.held[i]=!state.held[i];render();sync()});
+  diceEl.appendChild(b);
+ });
+}
+function drawScores(){
+ scoresEl.innerHTML="";
+ cats.forEach(([label,key])=>{
+  const r=document.createElement("div");r.className="score-row";
+  const b=document.createElement("button");b.type="button";b.className="cat";
+  const used=state.scores[state.turn][key]!==undefined;
+  const poss=(!used&&state.rolls>0&&canAct())?`<span class="possible">Possible: ${scoreFor(key)}</span>`:"";
+  b.innerHTML=label+poss;b.disabled=!canAct()||state.rolls===0||used;b.addEventListener("click",()=>choose(key,label));
+  r.appendChild(b);
+  for(let p=0;p<2;p++){const c=document.createElement("div");c.className="cell";c.textContent=state.scores[p][key]??"—";r.appendChild(c)}
+  scoresEl.appendChild(r);
+ });
+ $("p0h").textContent=state.players[0];$("p1h").textContent=state.players[1];
+ $("t0").textContent=`${state.players[0]}: ${total(0)}`;$("t1").textContent=`${state.players[1]}: ${total(1)}`;
+}
+function render(){
+ drawDice();drawScores();
+ $("turn").textContent=state.started?`${state.players[state.turn]}'s turn • Roll ${state.rolls}/3`:"Start a game above.";
+ rollBtn.disabled=!canAct()||state.rolls>=3;$("attackBtn").disabled=!state.started;
+}
+function sync(){if(mode==="online"&&conn&&conn.open)conn.send({type:"state",state})}
+function roll(){
+ if(!canAct()||state.rolls>=3)return;
+ state.dice=state.dice.map((d,i)=>state.held[i]?d:1+Math.floor(Math.random()*6));state.rolls++;render();
+ [...diceEl.children].forEach((el,i)=>{if(!state.held[i]){el.classList.add("rolling");setTimeout(()=>el.classList.remove("rolling"),720)}});
+ if(state.dice.every(v=>v===state.dice[0]))celebrate("🌰 YAHTZEE! ACORN JACKPOT! 🐿️",true);else if(Math.random()<.25)runner();
+ sync();
+}
+function choose(key,label){
+ if(!canAct()||state.rolls===0||state.scores[state.turn][key]!==undefined)return;
+ const pts=scoreFor(key);state.scores[state.turn][key]=pts;if(pts>=40)celebrate(`🐿️ ${label}: ${pts}! 🌰`,true);
+ const done=cats.every(([,k])=>state.scores[0][k]!==undefined)&&cats.every(([,k])=>state.scores[1][k]!==undefined);
+ if(done){state.started=false;const a=total(0),b=total(1);celebrate(a===b?"🌰 Woodland tie!":`🏆 ${state.players[a>b?0:1]} wins the Acorn Crown!`,true)}
+ else{state.turn=1-state.turn;state.rolls=0;state.held=[false,false,false,false,false]}
+ render();sync();
+}
+function runner(){const s=document.createElement("div");s.className="squirrel runner";s.textContent=["🐿️","🐿️🌰","🌰🐿️","🐿️🐿️"][Math.floor(Math.random()*4)];document.body.appendChild(s);setTimeout(()=>s.remove(),2900)}
+function acorn(){const a=document.createElement("div");a.className="acorn";a.textContent="🌰";a.style.left=Math.floor(Math.random()*95)+"vw";a.style.animationDuration=(1.4+Math.random()*1.4)+"s";document.body.appendChild(a);setTimeout(()=>a.remove(),3000)}
+function celebrate(txt,rain=false){const p=document.createElement("div");p.className="squirrel popup";p.textContent=txt;document.body.appendChild(p);setTimeout(()=>p.remove(),2100);runner();if(rain)for(let i=0;i<20;i++)setTimeout(acorn,i*60)}
+
+function startLocal(){mode="local";state=blank();state.players=[nameEl.value.trim()||"Player 1","Player 2"];state.started=true;statusEl.textContent="Pass & Play: hand the phone over after scoring.";render()}
+function reset(){const names=[...state.players];state=blank();state.players=names;state.started=mode!=="none";render();sync()}
+function code(){return "NUT-"+Math.random().toString(36).slice(2,7).toUpperCase()}
+function setupConn(){
+ conn.on("data",m=>{
+  if(m.type==="join"&&myIndex===0){state.players[1]=m.name||"Friend";render();sync()}
+  if(m.type==="hello"&&myIndex===1){state=m.state;state.players[1]=nameEl.value.trim()||"Friend";render();sync()}
+  if(m.type==="state"){state=m.state;render()}
+ });
+ conn.on("close",()=>statusEl.textContent="Room connection closed.");
+}
+function host(){
+ if(typeof Peer==="undefined"){statusEl.textContent="Online library could not load.";return}
+ mode="online";myIndex=0;const c=code();roomEl.value=c;statusEl.textContent="Creating room…";peer=new Peer(c);
+ peer.on("open",()=>statusEl.textContent=`Room ready: ${c} — send this code to your friend.`);
+ peer.on("connection",x=>{conn=x;setupConn();conn.on("open",()=>{state=blank();state.players=[nameEl.value.trim()||"Player 1","Friend"];state.started=true;conn.send({type:"hello",name:state.players[0],state});statusEl.textContent="Friend connected. You go first!";render();sync()})});
+ peer.on("error",e=>statusEl.textContent="Online error: "+e.type);
+}
+function join(){
+ if(typeof Peer==="undefined"){statusEl.textContent="Online library could not load.";return}
+ const c=roomEl.value.trim().toUpperCase();if(!c){statusEl.textContent="Enter the room code.";return}
+ mode="online";myIndex=1;peer=new Peer();statusEl.textContent="Connecting…";
+ peer.on("open",()=>{conn=peer.connect(c,{reliable:true});setupConn();conn.on("open",()=>{statusEl.textContent="Connected. Waiting for host…";conn.send({type:"join",name:nameEl.value.trim()||"Friend"})})});
+ peer.on("error",e=>statusEl.textContent="Online error: "+e.type);
+}
+$("localBtn").addEventListener("click",startLocal);$("hostBtn").addEventListener("click",host);$("joinBtn").addEventListener("click",join);
+rollBtn.addEventListener("click",roll);$("attackBtn").addEventListener("click",()=>celebrate("🐿️ ACORN RAID! 🌰🌰🌰",true));$("newBtn").addEventListener("click",reset);
+render();
+</script>
+</body>
+</html>
