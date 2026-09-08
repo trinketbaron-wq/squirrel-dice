@@ -1,12 +1,12 @@
-# Squirrel Dice Showdown v8
+# Squirrel Dice Showdown v9
 
-Major rebuild:
-- Real Three.js dice retained.
-- TOP FACE is explicitly the scoring face.
-- Each die shows its rolled value below the 3D scene.
-- Score rows become highlighted/tappable after a roll and lock the chosen category.
-- Real 3D squirrel built from Three.js geometry with animated limbs and tail.
-- 3D squirrel runs across the scene during events.
-- Live swaying 3D trees.
-- Animated waterfall and moving river texture.
-- No static screenshot used as the game background.
+Rebuild focused on actual game behavior and visible animation.
+
+- Independent dice trajectories, staggered starts, random spin axes, random bounce heights and landing times.
+- Upward-facing die face is explicitly the result; each die also has a numeric readout.
+- Score rows are entire tap targets, highlight green after a roll, commit the score, update totals, and advance turns.
+- Upper-section 35-point bonus implemented.
+- Three independently moving procedural 3D squirrels.
+- One squirrel runs across the scene on Acorn Raid and major scoring events.
+- Visible swaying trees.
+- Large animated waterfall, moving river and drifting mist.
