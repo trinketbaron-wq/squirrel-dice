@@ -1,8 +1,9 @@
 """Neon Yahtzee — Streamlit host.
 
-Streamlit only serves the page. All game logic, audio, voice and the
-two-player link (PeerJS / WebRTC) live in game/, so there are no reruns
-and the music never restarts.
+Streamlit only serves the page. All game logic, audio, voice, particles and
+the two-player link (PeerJS / WebRTC) live in game/, so there are no reruns
+and the music never restarts. The iframe is pinned to the viewport and the
+game lays itself out to fit — no scrolling.
 """
 
 from pathlib import Path
@@ -16,18 +17,26 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# Kill Streamlit's chrome and match the game's void background.
+# Strip Streamlit's chrome and give the iframe the whole window.
 st.markdown(
     """
     <style>
-      .stApp { background: #06001a; }
-      header[data-testid="stHeader"] { background: transparent; }
+      html, body, .stApp { background: #06001a; overflow: hidden; }
+      header[data-testid="stHeader"] { display: none; }
       #MainMenu, footer { visibility: hidden; }
-      .block-container {
-        padding: 0.25rem 0.5rem 0 0.5rem;
-        max-width: 1000px;
+      .stMainBlockContainer, .block-container {
+        padding: 0 !important;
+        max-width: 100% !important;
       }
-      iframe { border: 0; }
+      [data-testid="stAppViewContainer"], .stMain { overflow: hidden; }
+      [data-testid="stIFrame"] { height: 100vh; height: 100dvh; }
+      iframe.stIFrame, [data-testid="stIFrame"] iframe {
+        display: block;
+        border: 0;
+        height: 100vh !important;
+        height: 100dvh !important;
+      }
+      [data-testid="stElementContainer"] { margin: 0; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -66,8 +75,8 @@ if game_dir is None:
 
 page = build_page(game_dir)
 if hasattr(st, "iframe"):
-    st.iframe(page, height=1240)
+    st.iframe(page, height="stretch")
 else:  # Streamlit < 1.63
     import streamlit.components.v1 as components
 
-    components.html(page, height=1240, scrolling=True)
+    components.html(page, height=900, scrolling=False)

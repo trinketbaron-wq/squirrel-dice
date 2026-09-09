@@ -95,6 +95,13 @@ function totals(p) {
   return { upper, bonus, lower, yb: p.yahtzeeBonus, grand: upper + bonus + lower + p.yahtzeeBonus, filled };
 }
 
+/* Lower-section combos the dice score right now, strongest first. */
+const COMBO_ORDER = ['yahtzee', 'large', 'full', 'four', 'small', 'three'];
+const COMBO_NAME = { yahtzee: 'YAHTZEE', large: 'LARGE STRAIGHT', full: 'FULL HOUSE',
+                     four: 'FOUR OF A KIND', small: 'SMALL STRAIGHT', three: 'THREE OF A KIND' };
+function combosOnTable(dice, player) { return COMBO_ORDER.filter(k => scoreFor(k, dice, player) > 0); }
+function bestCombo(dice, player) { return combosOnTable(dice, player)[0] || null; }
+
 function newPlayer(name) {
   return { name, scores: Object.fromEntries(CATS.map(c => [c.key, null])), yahtzeeBonus: 0 };
 }
@@ -107,6 +114,7 @@ function newGame(names, starter = 0, seq = 0) {
     dice: [1, 2, 3, 4, 5],
     held: [false, false, false, false, false],
     rollsLeft: 3,
+    combo: null,
     seq: seq + 1,
     event: null,
   };
@@ -138,8 +146,12 @@ function applyAction(s, a, actor, rng = Math.random) {
       if (s.rollsLeft <= 0) return fail('No rolls left — pick a box');
       n.dice = s.dice.map((d, i) => (rolled && s.held[i]) ? d : 1 + Math.floor(rng() * 6));
       n.rollsLeft = s.rollsLeft - 1;
+      const best = bestCombo(n.dice, p);
+      n.combo = best;
       n.event = { type: 'roll', seq: n.seq, player: s.current, rollsLeft: n.rollsLeft,
-                  yahtzee: isYahtzee(n.dice), prevHeld: rolled ? s.held.slice() : [false, false, false, false, false] };
+                  yahtzee: isYahtzee(n.dice), combo: best, newCombo: !!best && best !== (s.combo || null),
+                  comboPts: best ? scoreFor(best, n.dice, p) : 0, comboUsed: !!best && p.scores[best] !== null,
+                  prevHeld: rolled ? s.held.slice() : [false, false, false, false, false] };
       return ok(n);
     }
     case 'hold': {
@@ -164,6 +176,7 @@ function applyAction(s, a, actor, rng = Math.random) {
       const joker = jokerActive(p, s.dice) && ['full', 'small', 'large'].includes(a.key);
       n.held = [false, false, false, false, false];
       n.rollsLeft = 3;
+      n.combo = null;
       n.current = (s.current + 1) % 2;
       n.event = { type: 'score', seq: n.seq, player: s.current, key: a.key, pts, bonus100, upperBonus, joker };
       if (n.players.every(pl => totals(pl).filled === CATS.length)) {
@@ -193,6 +206,13 @@ function describeEvent(s) {
       if (e.yahtzee) {
         return { text: `YAHTZEE on the table! ${P(e.player)} is looking at five ${NUM_WORDS[s.dice[0]]}s!`,
                  sfx: 'roll', after: 'yahtzee', speak: true, interrupt: true };
+      }
+      if (e.newCombo) {
+        const name = CAT[e.combo].label;
+        let text = pick([`${name}! That's ${e.comboPts} on the table.`, `${P(e.player)} rolls a ${name.toLowerCase()} — ${e.comboPts} points.`, `Look at that: ${name.toLowerCase()}, worth ${e.comboPts}.`]);
+        if (e.comboUsed) text = `${name} — but that box is already filled.`;
+        else if (e.rollsLeft > 0 && e.combo !== 'large') text += pick([' Take it or push your luck.', ' Bank it or keep rolling.', '']);
+        return { text, sfx: 'roll', after: e.comboUsed ? null : 'combo', speak: true, interrupt: true };
       }
       const text = e.rollsLeft === 2 ? pick([`${P(e.player)} rolls.`, 'Here we go.', 'Shake them up.', 'Dice are out.'])
                  : e.rollsLeft === 1 ? pick(['One roll left.', 'Last reroll coming up.', 'Hold what you like — one more.'])
@@ -324,6 +344,12 @@ const Audio = (() => {
       const t0 = ctx.currentTime;
       tone({ freq: 330, freqTo: 220, type: 'sawtooth', t: t0, dur: 0.18, vol: 0.18, bus: sfxBus, filter: 1200 });
       tone({ freq: 220, freqTo: 110, type: 'sawtooth', t: t0 + 0.18, dur: 0.3, vol: 0.18, bus: sfxBus, filter: 900 });
+    },
+    combo() {
+      const t0 = ctx.currentTime;
+      [659, 880, 1319].forEach((f, i) =>
+        tone({ freq: f, type: 'square', t: t0 + i * 0.07, dur: 0.22, vol: 0.18, bus: sfxBus, filter: 3000, echo: 0.5 }));
+      noise({ t: t0, dur: 0.3, vol: 0.1, type: 'bandpass', freq: 1500, freqTo: 7000, q: 2, bus: sfxBus });
     },
     bonus() {
       const t0 = ctx.currentTime;
@@ -547,6 +573,122 @@ const Net = (() => {
   return { st, on, host, join, send, teardown, available };
 })();
 
+/* ===================== Particles (canvas overlay) ===================== */
+
+const FX = (() => {
+  let cv = null, cx = null, parts = [], raf = null, last = 0, W = 0, H = 0, reduced = false;
+  const PALETTE = { magenta: [255, 43, 214], cyan: [34, 240, 255], gold: [255, 213, 74],
+                    violet: [160, 90, 255], white: [255, 255, 255] };
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const pickc = names => PALETTE[names[Math.floor(rnd(0, names.length))]];
+
+  function init(canvas) {
+    cv = canvas; cx = cv.getContext('2d');
+    if (!cx) { cv = null; return; }
+    reduced = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+    resize();
+    window.addEventListener('resize', resize);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) kick(); });
+    if (!reduced) for (let i = 0; i < 34; i++) add(ember(true));
+    kick();
+  }
+  function resize() {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    W = window.innerWidth; H = window.innerHeight;
+    cv.width = W * dpr; cv.height = H * dpr;
+    cv.style.width = W + 'px'; cv.style.height = H + 'px';
+    cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  function add(p) { if (parts.length < 900) parts.push(p); }
+  function ember(anywhere) {
+    return { kind: 'ember', x: rnd(0, W), y: anywhere ? rnd(0, H) : H + 6, vx: rnd(-6, 6), vy: rnd(-10, -26),
+             life: Infinity, age: rnd(0, 10), size: rnd(0.8, 1.8), c: pickc(['magenta', 'cyan', 'violet']), phase: rnd(0, 6.28) };
+  }
+
+  /* Radial burst from a point. */
+  function burst(x, y, o = {}) {
+    if (!cx) return;
+    const n = reduced ? Math.ceil((o.n || 30) / 4) : (o.n || 30);
+    const cols = o.colors || ['magenta', 'cyan'];
+    const spread = o.spread === undefined ? Math.PI : o.spread, angle = o.angle || 0;
+    const [s0, s1] = o.speed || [60, 260], [l0, l1] = o.life || [0.5, 1.1], [z0, z1] = o.size || [1.5, 3.2];
+    for (let i = 0; i < n; i++) {
+      const a = angle + rnd(-spread, spread), sp = rnd(s0, s1);
+      add({ kind: 'spark', x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: rnd(l0, l1), age: 0,
+            size: rnd(z0, z1), c: PALETTE[cols[i % cols.length]], g: o.gravity === undefined ? 220 : o.gravity,
+            drag: o.drag || 0.985 });
+    }
+    kick();
+  }
+  function confetti(n = 140) {
+    if (!cx) return;
+    n = reduced ? Math.ceil(n / 4) : n;
+    for (let i = 0; i < n; i++) {
+      add({ kind: 'confetti', x: rnd(0, W), y: rnd(-60, -5), vx: rnd(-50, 50), vy: rnd(80, 220), life: rnd(2.2, 3.8),
+            age: 0, size: rnd(2, 4), c: pickc(['magenta', 'cyan', 'gold', 'white']), g: 40, drag: 0.995,
+            spin: rnd(-6, 6), rot: rnd(0, 6.28) });
+    }
+    kick();
+  }
+  function fireworks(dur = 2600) {
+    if (!cx) return;
+    const t0 = performance.now();
+    (function shoot() {
+      if (performance.now() - t0 > dur) return;
+      burst(rnd(W * 0.15, W * 0.85), rnd(H * 0.15, H * 0.6),
+            { n: 70, colors: [['magenta', 'white'], ['cyan', 'white'], ['gold', 'magenta']][Math.floor(rnd(0, 3))],
+              speed: [80, 340], life: [0.7, 1.5], gravity: 120 });
+      setTimeout(shoot, rnd(180, 420));
+    })();
+  }
+  function at(elm) {
+    if (!elm) return [W / 2, H / 2];
+    const r = elm.getBoundingClientRect();
+    return [r.left + r.width / 2, r.top + r.height / 2];
+  }
+
+  function dot(x, y, r, c, a) {
+    cx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+    cx.globalAlpha = a * 0.35; cx.beginPath(); cx.arc(x, y, r * 2.6, 0, 6.283); cx.fill();
+    cx.globalAlpha = a;        cx.beginPath(); cx.arc(x, y, r, 0, 6.283);       cx.fill();
+  }
+  function kick() { if (cx && !raf) { last = performance.now(); raf = requestAnimationFrame(frame); } }
+  function frame(t) {
+    raf = null;
+    const dt = Math.min(0.05, (t - last) / 1000); last = t;
+    cx.clearRect(0, 0, W, H);
+    cx.globalCompositeOperation = 'lighter';
+    let alive = 0;
+    for (const p of parts) {
+      p.age += dt;
+      if (p.kind === 'ember') {
+        p.x += (p.vx + Math.sin(p.age * 1.3 + p.phase) * 8) * dt; p.y += p.vy * dt;
+        if (p.y < -8 || p.x < -8 || p.x > W + 8) Object.assign(p, ember(false));
+        dot(p.x, p.y, p.size, p.c, 0.35 + 0.3 * Math.sin(p.age * 2 + p.phase));
+        alive++; continue;
+      }
+      if (p.age >= p.life) continue;
+      p.vy += p.g * dt; p.vx *= p.drag; p.vy *= p.drag; p.x += p.vx * dt; p.y += p.vy * dt;
+      const a = 1 - p.age / p.life;
+      if (p.kind === 'confetti') {
+        p.rot += p.spin * dt;
+        cx.save(); cx.translate(p.x, p.y); cx.rotate(p.rot); cx.globalAlpha = a;
+        cx.fillStyle = `rgb(${p.c[0]},${p.c[1]},${p.c[2]})`; cx.fillRect(-p.size, -p.size * 0.5, p.size * 2, p.size);
+        cx.restore();
+      } else {
+        dot(p.x, p.y, p.size * (0.4 + 0.6 * a), p.c, a);
+      }
+      alive++;
+    }
+    cx.globalAlpha = 1;
+    cx.globalCompositeOperation = 'source-over';
+    parts = parts.filter(p => p.kind === 'ember' || p.age < p.life);
+    if (!alive) return;
+    if (document.hidden) setTimeout(kick, 500); else raf = requestAnimationFrame(frame);
+  }
+  return { init, burst, confetti, fireworks, at };
+})();
+
 /* ===================== UI ===================== */
 
 const PIPS = {
@@ -557,6 +699,8 @@ const PIPS = {
   5: [[28, 28], [72, 28], [50, 50], [28, 72], [72, 72]],
   6: [[28, 28], [72, 28], [28, 50], [72, 50], [28, 72], [72, 72]],
 };
+const SHORT = { ones: '1s', twos: '2s', threes: '3s', fours: '4s', fives: '5s', sixes: '6s', three: '3 kind',
+                four: '4 kind', full: 'Full hs', small: 'Sm str', large: 'Lg str', yahtzee: 'Yahtzee', chance: 'Chance' };
 
 function dieSVG(v) {
   const pips = PIPS[v].map(([x, y]) =>
@@ -565,8 +709,7 @@ function dieSVG(v) {
          `<rect class="face" x="5" y="5" width="90" height="90" rx="18" stroke="currentColor" stroke-width="4"/>${pips}</svg>`;
 }
 
-/* Sonar rings centred on an element. Drawn in #waves (an overlay), so the
-   board re-rendering underneath doesn't wipe them out. */
+/* Sonar rings centred on an element, drawn in an overlay so board re-renders can't wipe them. */
 function pulse(target, color = 'var(--cyan)', round = false) {
   if (!target || !el.waves) return;
   const r = target.getBoundingClientRect(), a = el.waves.getBoundingClientRect();
@@ -599,11 +742,31 @@ function myName() { return cleanName(el.name.value) || 'Player'; }
 
 function showPanel(which) {
   ['lobby', 'game', 'over'].forEach(id => el[id].classList.toggle('hidden', id !== which));
+  document.body.classList.toggle('playing', which !== 'lobby');
+  if (which === 'lobby') el.turn.textContent = '';
 }
 
 function flash(msg) {
   el.hint.textContent = msg;
   el.hint.style.color = 'var(--gold)';
+}
+
+/* Scale the board down if it would overflow the viewport. Never scroll. */
+function fitToScreen() {
+  const g = el.game;
+  if (!g || g.classList.contains('hidden')) return;
+  g.style.transform = ''; g.style.width = '';
+  const avail = g.clientHeight, need = g.scrollHeight;
+  if (need > avail + 1) {
+    const k = Math.max(0.5, avail / need);
+    g.style.transform = `scale(${k})`;
+    g.style.width = `${100 / k}%`;
+  }
+}
+let fitRaf = null;
+function scheduleFit() {
+  if (fitRaf) return;
+  fitRaf = requestAnimationFrame(() => { fitRaf = null; fitToScreen(); });
 }
 
 /* Apply an action locally (host/local) or send it to the host (guest). */
@@ -624,14 +787,64 @@ function commit(s) {
   react();
 }
 
-/* Announce / sound the latest event exactly once. */
+function flashCombo() {
+  el.combo.classList.remove('flash');
+  void el.combo.offsetWidth;   // restart the animation
+  el.combo.classList.add('flash');
+}
+
+function cellFor(key, player) {
+  const row = document.querySelector(`.card tr[data-key="${key}"]`);
+  return row ? row.children[player + 1] : null;
+}
+
+/* Announce / sound / sparkle the latest event exactly once. */
 function react() {
   const e = State && State.event;
   if (!e || e.seq <= announcedSeq) return;
   announcedSeq = e.seq;
   const d = describeEvent(State);
   if (!d) return;
-  if (e.type === 'roll') animateRoll(e);
+
+  if (e.type === 'roll') {
+    animateRoll(e);
+    el.dice.querySelectorAll('.die').forEach((die, i) => {
+      if (!e.prevHeld[i]) { const [x, y] = FX.at(die); FX.burst(x, y, { n: 7, speed: [40, 150], life: [0.3, 0.6], size: [1, 2], gravity: 320 }); }
+    });
+    setTimeout(() => {
+      if (e.yahtzee) {
+        flashCombo();
+        FX.confetti(140);
+        el.dice.querySelectorAll('.die').forEach(die => { const [x, y] = FX.at(die); FX.burst(x, y, { n: 40, colors: ['gold', 'white', 'magenta'], speed: [80, 320], life: [0.8, 1.6], gravity: 160 }); });
+      } else if (e.newCombo && !e.comboUsed) {
+        flashCombo();
+        const [x, y] = FX.at(el.combo);
+        FX.burst(x, y, { n: 60, colors: ['gold', 'white'], speed: [60, 280], life: [0.6, 1.3], gravity: 140 });
+        const row = document.querySelector(`.card tr[data-key="${e.combo}"]`);
+        if (row) { const [rx, ry] = FX.at(row.children[0]); FX.burst(rx, ry, { n: 24, colors: ['gold'], speed: [40, 180], life: [0.5, 1], gravity: 120, spread: 0.6, angle: 0 }); }
+      }
+    }, 650);
+  } else if (e.type === 'hold') {
+    const die = el.dice.querySelector(`.die[data-i="${e.i}"]`);
+    if (die) { const [x, y] = FX.at(die); FX.burst(x, y, { n: 12, colors: e.held ? ['cyan', 'white'] : ['magenta'], speed: [40, 160], life: [0.3, 0.7], size: [1, 2.2], gravity: 200 }); }
+  } else if (e.type === 'score') {
+    const cell = cellFor(e.key, e.player);
+    if (cell) {
+      const [x, y] = FX.at(cell);
+      if (e.pts === 0) FX.burst(x, y, { n: 8, colors: ['violet'], speed: [20, 80], life: [0.4, 0.8], size: [1, 2], gravity: 260 });
+      else FX.burst(x, y, { n: Math.min(90, 26 + e.pts), colors: ['magenta', 'white', 'cyan'], speed: [60, 280], life: [0.6, 1.3], gravity: 180 });
+    }
+    if ((e.key === 'yahtzee' && e.pts === 50) || e.bonus100) {
+      FX.confetti(160);
+      if (cell) { const [x, y] = FX.at(cell); FX.burst(x, y, { n: 80, colors: ['gold', 'white'], speed: [100, 380], life: [0.8, 1.8], gravity: 120 }); }
+    }
+    if (e.upperBonus) {
+      const bonus = el['card-upper'].querySelector('tr.bonus');
+      if (bonus) { const [x, y] = FX.at(bonus.children[e.player + 1]); FX.burst(x, y, { n: 50, colors: ['gold', 'cyan'], speed: [60, 260], life: [0.6, 1.4], gravity: 140 }); }
+    }
+    if (e.gameOver) { setTimeout(() => { FX.fireworks(3200); FX.confetti(200); }, 400); }
+  }
+
   Audio.play(d.sfx);
   if (d.after) setTimeout(() => Audio.play(d.after), e.type === 'roll' ? 700 : 900);
   if (d.text) el.ticker.textContent = d.text;
@@ -664,6 +877,7 @@ function render(opts = {}) {
     const [a, b] = s.players.map(p => totals(p).grand);
     el['over-title'].textContent = a === b ? 'TIE GAME' : `${(a > b ? s.players[0] : s.players[1]).name.toUpperCase()} WINS`;
     el['over-score'].textContent = `${s.players[0].name} ${a}  \u2014  ${s.players[1].name} ${b}`;
+    el.turn.textContent = 'Final';
     showPanel('over');
     return;
   }
@@ -673,10 +887,10 @@ function render(opts = {}) {
   const round = Math.min(13, Math.floor(filled / 2) + 1);
   const who = s.players[s.current].name;
   if (Net.st.mode === 'local') {
-    el.turn.textContent = `Round ${round} of 13: ${who}'s turn`;
+    el.turn.textContent = `Round ${round} of 13 \u2014 ${who}'s turn`;
     el.turn.classList.remove('waiting');
   } else {
-    el.turn.textContent = mine ? `Round ${round} of 13: your turn` : `Round ${round} of 13: waiting for ${who}`;
+    el.turn.textContent = mine ? `Round ${round} of 13 \u2014 your turn` : `Round ${round} of 13 \u2014 waiting for ${who}`;
     el.turn.classList.toggle('waiting', !mine);
   }
 
@@ -686,56 +900,64 @@ function render(opts = {}) {
     ` style="${rolled ? '' : 'opacity:.35'}" aria-label="Die ${i + 1} shows ${v}${s.held[i] ? ', held' : ''}">` +
     `${dieSVG(v)}<span class="tag">HELD</span></button>`).join('');
 
+  el.combo.textContent = (rolled && s.combo && !animating) ? COMBO_NAME[s.combo] : '';
+
   el['btn-roll'].disabled = !mine || s.rollsLeft === 0 || animating;
   el.rolls.innerHTML = [0, 1, 2].map(i => `<i class="${i < 3 - s.rollsLeft ? 'spent' : ''}"></i>`).join('');
 
   el.hint.style.color = '';
   if (mine) {
     el.hint.textContent = !rolled ? 'Roll to start your turn'
-                        : s.rollsLeft > 0 ? 'Click dice to hold them, roll again, or pick a box below'
-                        : 'Pick a box below';
+                        : s.rollsLeft > 0 ? 'Tap dice to hold, roll again, or pick a box'
+                        : 'Pick a box';
   } else {
     el.hint.textContent = Net.st.mode === 'local' ? '' : `${who} is rolling`;
   }
 
-  if (!opts.skipCard) renderCard();
+  if (!opts.skipCard) renderCards();
+  scheduleFit();
 }
 
-function renderCard() {
+function renderCards() {
   const s = State, rolled = s.rollsLeft < 3, mine = isMyTurn();
-  const av = (mine && rolled) ? availableCats(s.players[s.current], s.dice) : { keys: [], forced: false };
+  const cur = s.players[s.current];
+  const av = (mine && rolled) ? availableCats(cur, s.dice) : { keys: [], forced: false };
+  const hot = new Set(rolled ? combosOnTable(s.dice, cur) : []);
   const T = s.players.map(totals);
+  const me = p => (p === s.current ? ' me' : '');
 
   const cell = (p, c) => {
     const pl = s.players[p], v = pl.scores[c.key];
     if (v !== null) {
       const cls = (v === 0 ? ' zero' : '') + ((c.key === 'yahtzee' && v === 50) ? ' big' : '');
-      return `<td class="n${cls}">${v}</td>`;
+      return `<td class="n${cls}${me(p)}">${v}</td>`;
     }
     if (p === s.current && av.keys.includes(c.key)) {
       const pts = scoreFor(c.key, s.dice, pl);
-      return `<td class="n open"><button class="pick${av.forced ? ' forced' : ''}" data-key="${c.key}"` +
+      const pcls = (hot.has(c.key) ? ' hot' : '') + (av.forced ? ' forced' : '');
+      return `<td class="n open${me(p)}"><button class="pick${pcls}" data-key="${c.key}"` +
              ` aria-label="Score ${pts} in ${c.label}">${pts}</button></td>`;
     }
-    return '<td class="n"></td>';
+    return `<td class="n${me(p)}"></td>`;
   };
-  const row = c => `<tr><td>${c.label}<span class="how">${c.how}</span></td>${cell(0, c)}${cell(1, c)}</tr>`;
+  const row = c => {
+    let cls = '';
+    if (hot.has(c.key)) cls = 'hot' + (cur.scores[c.key] !== null ? ' used' : '') + (c.key === s.combo ? ' best' : '');
+    return `<tr class="${cls}" data-key="${c.key}"><td><span class="long">${c.label}</span><span class="short">${SHORT[c.key]}</span></td>${cell(0, c)}${cell(1, c)}</tr>`;
+  };
   const sumRow = (label, f, cls = 'sum') =>
-    `<tr class="${cls}"><td>${label}</td><td class="n">${f(T[0])}</td><td class="n">${f(T[1])}</td></tr>`;
-  const section = label => `<tr class="section"><td colspan="3">${label}</td></tr>`;
+    `<tr class="${cls}"><td>${label}</td><td class="n${me(0)}">${f(T[0])}</td><td class="n${me(1)}">${f(T[1])}</td></tr>`;
+  const head = first =>
+    `<tr><th>${first}</th><th class="${s.current === 0 ? 'me' : ''}">${esc(s.players[0].name)}</th>` +
+    `<th class="${s.current === 1 ? 'me' : ''}">${esc(s.players[1].name)}</th></tr>`;
 
-  el.card.innerHTML =
-    `<tr><th>Round ${Math.min(13, Math.floor((T[0].filled + T[1].filled) / 2) + 1)}</th>` +
-    `<th class="${s.current === 0 ? 'me' : ''}">${esc(s.players[0].name)}</th>` +
-    `<th class="${s.current === 1 ? 'me' : ''}">${esc(s.players[1].name)}</th></tr>` +
-    section('Upper section') +
-    UPPER.map(row).join('') +
+  el['card-upper'].innerHTML =
+    head('Upper') + UPPER.map(row).join('') +
     sumRow('Upper total', t => t.upper) +
-    sumRow('Bonus at 63', t => t.bonus) +
-    section('Lower section') +
-    LOWER.map(row).join('') +
+    sumRow('Bonus at 63', t => t.bonus, 'sum bonus');
+  el['card-lower'].innerHTML =
+    head('Lower') + LOWER.map(row).join('') +
     sumRow('Yahtzee bonus', t => t.yb) +
-    sumRow('Lower total', t => t.lower) +
     sumRow('Total', t => t.grand, 'sum grand');
 }
 
@@ -760,9 +982,9 @@ function bindNet() {
       Audio.play('connect');
       if (Net.st.mode === 'guest') {
         Net.send({ t: 'join', name: myName() });
-        setLobbyStatus('Connected. Waiting for the host to deal you in…');
+        setLobbyStatus('Connected. Waiting for the host to deal you in\u2026');
       } else {
-        setLobbyStatus('Opponent connected. Starting…');
+        setLobbyStatus('Opponent connected. Starting\u2026');
       }
       return;
     }
@@ -829,13 +1051,15 @@ function bindUI() {
     pulse(b, b.classList.contains('held') ? 'var(--magenta)' : 'var(--cyan)');
     dispatch({ type: 'hold', i: Number(b.dataset.i) });
   });
-  el.card.addEventListener('click', e => {
+  const onPick = e => {
     const b = e.target.closest('button.pick');
     if (!b || b.disabled) return;
-    pulse(b, b.classList.contains('forced') ? 'var(--gold)' : 'var(--magenta)');
-    el.card.querySelectorAll('button.pick').forEach(x => { x.disabled = true; });  // one tap, one score
+    pulse(b, b.classList.contains('hot') ? 'var(--gold)' : 'var(--magenta)');
+    document.querySelectorAll('button.pick').forEach(x => { x.disabled = true; });  // one tap, one score
     dispatch({ type: 'score', key: b.dataset.key });
-  });
+  };
+  el['card-upper'].addEventListener('click', onPick);
+  el['card-lower'].addEventListener('click', onPick);
   el['btn-rematch'].addEventListener('click', () => {
     pulse(el['btn-rematch'], 'var(--gold)');
     dispatch({ type: 'rematch' });
@@ -867,18 +1091,21 @@ function bindUI() {
     Audio.play('hold');
   });
 
+  window.addEventListener('resize', scheduleFit);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(scheduleFit);
   window.addEventListener('beforeunload', () => Net.teardown());
 }
 
 function init() {
-  ['lobby', 'game', 'over', 'dice', 'demo-dice', 'card', 'turn', 'conn', 'rolls', 'hint', 'ticker',
-   'lobby-status', 'name', 'code', 'btn-host', 'btn-join', 'btn-local', 'btn-roll', 'btn-rematch',
-   'btn-music', 'btn-voice', 'btn-sfx', 'over-title', 'over-score', 'waves']
+  ['lobby', 'game', 'over', 'dice', 'demo-dice', 'card-upper', 'card-lower', 'combo', 'turn', 'conn', 'rolls',
+   'hint', 'ticker', 'lobby-status', 'name', 'code', 'btn-host', 'btn-join', 'btn-local', 'btn-roll',
+   'btn-rematch', 'btn-music', 'btn-voice', 'btn-sfx', 'over-title', 'over-score', 'waves', 'fx']
     .forEach(id => { el[id] = document.getElementById(id); });
 
   Voice.init();
   if (!Voice.has()) { el['btn-voice'].disabled = true; el['btn-voice'].setAttribute('aria-pressed', 'false'); }
   el['demo-dice'].innerHTML = [1, 2, 3, 4, 5].map(v => `<button class="die" disabled tabindex="-1">${dieSVG(v)}</button>`).join('');
+  try { FX.init(el.fx); } catch (e) { /* no canvas: skip particles */ }
   bindNet();
   bindUI();
   if (!Net.available()) {
@@ -887,7 +1114,7 @@ function init() {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { CATS, rawScore, scoreFor, availableCats, totals, newGame, applyAction, describeEvent };
+  module.exports = { CATS, rawScore, scoreFor, availableCats, totals, newGame, applyAction, describeEvent, combosOnTable, bestCombo };
 }
 if (typeof document !== 'undefined') {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
