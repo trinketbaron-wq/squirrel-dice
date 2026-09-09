@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neon Yahtzee</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+/*__CSS__*/
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="horizon" aria-hidden="true">
+    <div class="sun"></div>
+    <div class="grid"></div>
+  </div>
+
+  <header class="masthead">
+    <h1 class="title">NEON YAHTZEE</h1>
+    <div class="audio-bar" role="group" aria-label="Sound">
+      <button id="btn-music" class="toggle" aria-pressed="false">Music</button>
+      <button id="btn-voice" class="toggle" aria-pressed="true">Announcer</button>
+      <button id="btn-sfx" class="toggle" aria-pressed="true">Effects</button>
+    </div>
+  </header>
+
+  <section id="lobby" class="panel">
+    <div class="dice-row demo" id="demo-dice" aria-hidden="true"></div>
+    <div class="lobby-form">
+      <label class="field">
+        <span>Your name</span>
+        <input id="name" maxlength="12" autocomplete="off" spellcheck="false" placeholder="Player">
+      </label>
+      <div class="lobby-actions">
+        <button id="btn-host" class="neon">Host online game</button>
+        <div class="join">
+          <input id="code" maxlength="5" autocomplete="off" spellcheck="false" placeholder="Room code">
+          <button id="btn-join" class="neon">Join</button>
+        </div>
+        <button id="btn-local" class="neon quiet">Two players, one screen</button>
+      </div>
+      <div id="lobby-status" class="status" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <section id="game" class="panel hidden">
+    <div class="topline">
+      <div id="turn" class="turn"></div>
+      <div id="conn" class="conn"></div>
+    </div>
+    <div class="dice-row" id="dice"></div>
+    <div class="controls">
+      <button id="btn-roll" class="neon roll">Roll</button>
+      <div id="rolls" class="rolls" aria-label="Rolls left"></div>
+      <div id="hint" class="hint"></div>
+    </div>
+    <div id="ticker" class="ticker" aria-live="polite"></div>
+    <table id="card" class="card"></table>
+  </section>
+
+  <section id="over" class="panel hidden">
+    <div id="over-title" class="over-title"></div>
+    <div id="over-score" class="over-score"></div>
+    <button id="btn-rematch" class="neon">Play again</button>
+  </section>
+</div>
+<script>
+/*__JS__*/
+</script>
+</body>
+</html>
