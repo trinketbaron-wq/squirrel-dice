@@ -25,6 +25,7 @@
   <header class="masthead">
     <h1 class="title">NEON YAHTZEE</h1>
     <div id="turn" class="turn"></div>
+    <div id="conn" class="conn hidden" aria-live="polite"><i class="dot"></i><span></span></div>
     <div class="audio-bar" role="group" aria-label="Sound">
       <button id="btn-music" class="toggle" aria-pressed="false">Music</button>
       <button id="btn-voice" class="toggle" aria-pressed="true">Announcer</button>
@@ -47,6 +48,7 @@
         </div>
         <button id="btn-local" class="neon quiet">Two players, one screen</button>
       </div>
+      <div id="resume" class="resume hidden"></div>
       <div id="lobby-status" class="status" aria-live="polite"></div>
     </div>
   </section>
@@ -61,7 +63,6 @@
       </div>
       <div id="hint" class="hint"></div>
       <div id="ticker" class="ticker" aria-live="polite"></div>
-      <div id="conn" class="conn"></div>
     </div>
     <div class="cards">
       <table id="card-upper" class="card"></table>

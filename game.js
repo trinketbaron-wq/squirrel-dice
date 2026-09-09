@@ -492,85 +492,171 @@ const Voice = (() => {
 const Net = (() => {
   const ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const PREFIX = 'neon-yahtzee-';
-  const st = { mode: 'none', me: 0, peer: null, conn: null, code: null };
-  const handlers = { status: () => {}, error: () => {}, message: () => {}, closed: () => {} };
-  let joinTimer = null;
+  /* STUN for the easy cases, TURN relays for phones on carrier NAT. */
+  const ICE = {
+    iceServers: [
+      { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:global.stun.twilio.com:3478'] },
+      { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' },
+      { urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443', 'turns:openrelay.metered.ca:443'],
+        username: 'openrelayproject', credential: 'openrelayproject' },
+    ],
+    sdpSemantics: 'unified-plan',
+  };
+  const tune = { retryMs: 4000, attempts: 12, linkTimeoutMs: 20000, reclaimMs: 3000, rejoinMs: 1500 };
+  const st = { mode: 'none', me: 0, peer: null, conn: null, code: null, stage: 'idle', attempt: 0, keepCode: false };
+  const handlers = { status: () => {}, message: () => {}, closed: () => {} };
+  let retryTimer = null, linkTimer = null;
 
   const on = (k, fn) => { handlers[k] = fn; };
   const available = () => typeof window !== 'undefined' && typeof window.Peer === 'function';
   const makeCode = () => Array.from({ length: 4 }, () => ALPHA[Math.floor(Math.random() * ALPHA.length)]).join('');
   const NO_LIB = 'Online play needs the PeerJS library, which did not load. Try "Two players, one screen".';
+  const connected = () => !!(st.conn && st.conn.open);
+
+  function setStage(stage, extra = {}) {
+    st.stage = stage;
+    handlers.status(Object.assign({ stage, mode: st.mode, code: st.code, attempt: st.attempt, max: tune.attempts }, extra));
+  }
+  function fail(message) { setStage('error', { message }); }
 
   function describeError(err) {
     const type = err && err.type;
-    if (type === 'peer-unavailable') return `No room called ${st.code}. Check the code with the host.`;
     if (['network', 'server-error', 'socket-error', 'socket-closed'].includes(type))
-      return 'Could not reach the matchmaking server. Check your connection and try again.';
-    if (type === 'browser-incompatible') return 'This browser does not support WebRTC.';
+      return 'Could not reach the matchmaking server. Check your connection, then tap Retry.';
+    if (type === 'browser-incompatible') return 'This browser does not support WebRTC. Try Chrome or Safari.';
     return (err && err.message) ? err.message : String(err);
   }
 
   function wire(conn) {
     st.conn = conn;
     conn.on('data', d => handlers.message(d));
-    conn.on('close', () => handlers.closed());
-    conn.on('error', e => handlers.error(describeError(e)));
+    conn.on('close', () => { if (st.conn === conn) { st.conn = null; setStage('lost'); handlers.closed(); } });
+    conn.on('error', () => { /* close follows */ });
+    conn.on('iceStateChanged', state => {
+      if (!conn.open && (state === 'checking' || state === 'connected' || state === 'completed')) setStage('linking');
+    });
+  }
+
+  function reconnectSoon(peer, delay = 1000) {
+    setTimeout(() => {
+      try { if (peer && !peer.destroyed && peer.disconnected) peer.reconnect(); } catch (e) { /* ignore */ }
+    }, delay);
   }
 
   function teardown() {
-    clearTimeout(joinTimer);
-    if (st.conn) { try { st.conn.close(); } catch (e) { /* ignore */ } }
+    clearTimeout(retryTimer); clearTimeout(linkTimer);
+    if (st.conn) { const c = st.conn; st.conn = null; try { c.close(); } catch (e) { /* ignore */ } }
     if (st.peer) { try { st.peer.destroy(); } catch (e) { /* ignore */ } }
-    st.conn = null; st.peer = null;
+    st.peer = null;
   }
 
-  function host(attempt = 0) {
-    if (!available()) { handlers.error(NO_LIB); return; }
+  /* ---- Host ---- */
+  function host(code) {
+    if (!available()) { fail(NO_LIB); return; }
     teardown();
-    st.mode = 'host'; st.me = 0; st.code = makeCode();
-    const peer = new window.Peer(PREFIX + st.code, { debug: 0 });
+    st.mode = 'host'; st.me = 0; st.attempt = 0;
+    st.keepCode = !!code;
+    st.code = (code || makeCode()).toUpperCase();
+    openHostPeer(0);
+  }
+
+  function openHostPeer(attempt) {
+    const peer = new window.Peer(PREFIX + st.code, { debug: 0, config: ICE });
     st.peer = peer;
-    handlers.status('Reaching the matchmaking server…');
-    peer.on('open', () => handlers.status({ code: st.code }));
+    setStage('server');
+    peer.on('open', () => setStage(connected() ? 'connected' : 'waiting'));
     peer.on('connection', conn => {
-      if (st.conn && st.conn.open) { try { conn.close(); } catch (e) { /* room full */ } return; }
+      if (connected()) { try { conn.close(); } catch (e) { /* room full */ } return; }
       wire(conn);
-      conn.on('open', () => handlers.status('connected'));
+      setStage('linking');
+      conn.on('open', () => setStage('connected'));
     });
     peer.on('error', err => {
-      if (err && err.type === 'unavailable-id' && attempt < 3) { host(attempt + 1); return; }
-      handlers.error(describeError(err));
+      const type = err && err.type;
+      if (type === 'unavailable-id') {
+        if (st.keepCode && attempt < 4) {           // reclaiming our old room after a reload
+          setStage('server', { message: 'Reclaiming your room\u2026' });
+          retryTimer = setTimeout(() => openHostPeer(attempt + 1), tune.reclaimMs);
+        } else if (attempt < 6) {
+          st.code = makeCode(); st.keepCode = false;
+          openHostPeer(attempt + 1);
+        } else fail('Could not open a room. Tap Retry.');
+        return;
+      }
+      if (connected()) return;                        // server hiccups don't matter once linked
+      if (type === 'peer-unavailable') return;
+      fail(describeError(err));
     });
-    peer.on('disconnected', () => { try { peer.reconnect(); } catch (e) { /* ignore */ } });
+    peer.on('disconnected', () => { if (!connected()) setStage('server'); reconnectSoon(peer); });
   }
 
+  /* ---- Guest ---- */
   function join(code) {
-    if (!available()) { handlers.error(NO_LIB); return; }
+    if (!available()) { fail(NO_LIB); return; }
     code = (code || '').trim().toUpperCase();
-    if (code.length !== 4) { handlers.error('Enter the 4-character room code from the host.'); return; }
+    if (code.length !== 4) { fail('Enter the 4-character room code from the host.'); return; }
     teardown();
-    st.mode = 'guest'; st.me = 1; st.code = code;
-    const peer = new window.Peer({ debug: 0 });
+    st.mode = 'guest'; st.me = 1; st.code = code; st.attempt = 0;
+    const peer = new window.Peer({ debug: 0, config: ICE });
     st.peer = peer;
-    handlers.status('Reaching the matchmaking server…');
-    peer.on('open', () => {
-      handlers.status(`Looking for room ${code}…`);
-      const conn = peer.connect(PREFIX + code, { reliable: true, serialization: 'json' });
-      wire(conn);
-      joinTimer = setTimeout(() => {
-        if (!conn.open) handlers.error('Found the room but could not open a direct link. A strict firewall on either side can block this.');
-      }, 15000);
-      conn.on('open', () => { clearTimeout(joinTimer); handlers.status('connected'); });
+    setStage('server');
+    peer.on('open', attemptConnect);
+    peer.on('error', err => {
+      const type = err && err.type;
+      if (type === 'peer-unavailable') {
+        if (st.attempt < tune.attempts) {
+          setStage('finding', { notFound: true });
+          retryTimer = setTimeout(attemptConnect, tune.retryMs);
+        } else {
+          fail(`No room called ${st.code} right now. Check the code, and make sure the host still has the game open on their screen, then tap Retry.`);
+        }
+        return;
+      }
+      if (connected()) return;
+      fail(describeError(err));
     });
-    peer.on('error', err => handlers.error(describeError(err)));
-    peer.on('disconnected', () => { try { peer.reconnect(); } catch (e) { /* ignore */ } });
+    peer.on('disconnected', () => reconnectSoon(peer));
+  }
+
+  function attemptConnect() {
+    const peer = st.peer;
+    if (!peer || peer.destroyed || st.mode !== 'guest') return;
+    if (peer.disconnected) { reconnectSoon(peer, 0); retryTimer = setTimeout(attemptConnect, 1500); return; }
+    st.attempt++;
+    setStage('finding');
+    const conn = peer.connect(PREFIX + st.code, { reliable: true, serialization: 'json' });
+    wire(conn);
+    clearTimeout(linkTimer);
+    linkTimer = setTimeout(() => {
+      if (!conn.open) {
+        try { conn.close(); } catch (e) { /* ignore */ }
+        fail('Found the room but could not open a direct link. This is usually a mobile network or firewall: ' +
+             'try switching one phone between Wi-Fi and mobile data, then tap Retry.');
+      }
+    }, tune.linkTimeoutMs);
+    conn.on('open', () => { clearTimeout(linkTimer); setStage('connected'); });
+  }
+
+  function retry() {
+    if (st.mode === 'guest' && st.code) join(st.code);
+    else if (st.mode === 'host') host(st.code);
   }
 
   function send(obj) {
-    if (st.conn && st.conn.open) { try { st.conn.send(obj); } catch (e) { /* ignore */ } }
+    if (connected()) { try { st.conn.send(obj); } catch (e) { /* ignore */ } }
   }
 
-  return { st, on, host, join, send, teardown, available };
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden || !st.peer) return;
+      reconnectSoon(st.peer, 0);                       // phone came back from the background
+      if (st.mode === 'guest' && !connected() && st.stage !== 'idle' && st.stage !== 'error') {
+        clearTimeout(retryTimer); retryTimer = setTimeout(attemptConnect, 300);
+      }
+    });
+  }
+
+  return { st, tune, on, host, join, retry, send, teardown, available, connected };
 })();
 
 /* ===================== Particles (canvas overlay) ===================== */
@@ -726,6 +812,28 @@ function pulse(target, color = 'var(--cyan)', round = false) {
 }
 
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/* Survive a reload: the host keeps its room + state, the guest keeps its room. */
+const Session = {
+  save(obj) { try { sessionStorage.setItem('neon-yahtzee', JSON.stringify(obj)); } catch (e) { /* private mode */ } },
+  load()    { try { return JSON.parse(sessionStorage.getItem('neon-yahtzee') || 'null'); } catch (e) { return null; } },
+  clear()   { try { sessionStorage.removeItem('neon-yahtzee'); } catch (e) { /* ignore */ } },
+};
+
+/* The Streamlit page URL with ?room=CODE, so a tapped link lands with the code filled in. */
+function shareLink(code) {
+  try {
+    const u = new URL(window.parent.location.href);
+    u.searchParams.set('room', code);
+    return u.href;
+  } catch (e) { return null; }
+}
+function roomFromUrl() {
+  try {
+    const v = new URL(window.parent.location.href).searchParams.get('room');
+    return v ? v.trim().toUpperCase().slice(0, 4) : null;
+  } catch (e) { return null; }
+}
 const cleanName = s => String(s || '').replace(/[^\w .'-]/g, '').trim().slice(0, 12);
 
 let State = null;
@@ -743,12 +851,33 @@ function myName() { return cleanName(el.name.value) || 'Player'; }
 function showPanel(which) {
   ['lobby', 'game', 'over'].forEach(id => el[id].classList.toggle('hidden', id !== which));
   document.body.classList.toggle('playing', which !== 'lobby');
+  el.conn.classList.toggle('hidden', which === 'lobby');
   if (which === 'lobby') el.turn.textContent = '';
 }
 
 function flash(msg) {
   el.hint.textContent = msg;
   el.hint.style.color = 'var(--gold)';
+}
+
+function setConn(cls, text) {
+  el.conn.className = 'conn' + (cls ? ' ' + cls : '');
+  el.conn.querySelector('span').textContent = text;
+}
+
+/* One line for the masthead pill, derived from the network stage. */
+function connLine(m) {
+  const opp = State ? State.players[Net.st.me === 0 ? 1 : 0].name : 'opponent';
+  switch (m.stage) {
+    case 'connected': return ['ok', `Linked with ${opp}`];
+    case 'waiting':   return ['warn', `Room ${m.code} · waiting for ${State ? opp + ' to rejoin' : 'opponent'}`];
+    case 'linking':   return ['warn', 'Opening link…'];
+    case 'finding':   return ['warn', `Reconnecting to room ${m.code}… (${m.attempt}/${m.max})`];
+    case 'server':    return ['warn', 'Reconnecting to server…'];
+    case 'lost':      return ['bad', `${opp} dropped — waiting for them to rejoin`];
+    case 'error':     return ['bad', 'Connection failed — tap to retry'];
+    default:          return ['', ''];
+  }
 }
 
 /* Scale the board down if it would overflow the viewport. Never scroll. */
@@ -782,7 +911,10 @@ function dispatch(action) {
 
 function commit(s) {
   State = s;
-  if (Net.st.mode === 'host') Net.send({ t: 'state', state: s });
+  if (Net.st.mode === 'host') {
+    Net.send({ t: 'state', state: s });
+    Session.save({ mode: 'host', code: Net.st.code, name: myName(), state: s });
+  }
   render();
   react();
 }
@@ -961,14 +1093,83 @@ function renderCards() {
     sumRow('Total', t => t.grand, 'sum grand');
 }
 
-function setLobbyStatus(msg, isError = false) {
-  el['lobby-status'].classList.toggle('error', isError);
-  if (msg && typeof msg === 'object' && msg.code) {
-    el['lobby-status'].innerHTML =
-      `Room code <span class="code">${esc(msg.code)}</span><br>Send it to your opponent. The game starts when they join.`;
+const STEPS = {
+  host:  [['server', 'Contact server'], ['waiting', 'Room open'], ['linking', 'Opponent found'], ['connected', 'Connected']],
+  guest: [['server', 'Contact server'], ['finding', 'Find room'], ['linking', 'Open link'], ['connected', 'Connected']],
+};
+
+/* Big, obvious connection status: stepper + code + what to do next. */
+function renderStatus(m) {
+  const box = el['lobby-status'];
+  if (!m) { box.className = 'status'; box.innerHTML = ''; return; }
+  if (typeof m === 'string') { box.className = 'status'; box.innerHTML = `<div class="detail">${esc(m)}</div>`; return; }
+
+  const steps = STEPS[m.mode] || STEPS.guest;
+  const failed = m.stage === 'error' || m.stage === 'lost';
+  let idx = steps.findIndex(x => x[0] === m.stage);
+  if (m.stage === 'lost') idx = 3;
+  if (m.stage === 'error') idx = Math.max(0, steps.findIndex(x => x[0] === (Net.st.mode === 'host' ? 'waiting' : 'finding')));
+  const li = steps.map(([k, label], i) => {
+    const cls = failed && i === idx ? 'fail' : i < idx ? 'done' : i === idx ? 'active' : '';
+    return `<li class="${cls}">${label}</li>`;
+  }).join('');
+
+  let headline = '', detail = '', actions = '';
+  const code = esc(m.code || '');
+  const link = m.code ? shareLink(m.code) : null;
+  const shareBtns = `<button class="neon" data-act="copy">Copy code</button>` +
+    (link ? `<button class="neon" data-act="share">Share link</button>` : '');
+
+  if (m.mode === 'host') {
+    if (m.stage === 'server') { headline = m.message || 'Contacting server\u2026'; detail = 'This takes a second or two.'; }
+    else if (m.stage === 'waiting') {
+      headline = 'Your room is open';
+      detail = `<span class="code">${code}</span>Send this code to your opponent and <b>keep this page open</b> \u2014 the room closes if this tab sleeps.` +
+               (link ? `<span class="link">${esc(link)}</span>` : '');
+      actions = shareBtns;
+    }
+    else if (m.stage === 'linking') { headline = 'Opponent found'; detail = 'Opening the link between your phones\u2026'; }
+    else if (m.stage === 'connected') { headline = 'Connected'; detail = 'Starting the game\u2026'; }
   } else {
-    el['lobby-status'].textContent = msg || '';
+    if (m.stage === 'server') headline = 'Contacting server\u2026';
+    else if (m.stage === 'finding') {
+      headline = m.notFound ? `Room ${code} not found yet` : `Looking for room ${code}\u2026`;
+      detail = m.notFound
+        ? `The host may have switched apps \u2014 their room only exists while their page is open. Retrying (${m.attempt} of ${m.max})\u2026`
+        : 'Asking the server for the host\u2026';
+    }
+    else if (m.stage === 'linking') { headline = 'Host found'; detail = 'Opening the link between your phones\u2026 up to 20 seconds on mobile data.'; }
+    else if (m.stage === 'connected') { headline = 'Connected'; detail = 'Waiting for the host to deal you in\u2026'; }
   }
+  if (m.stage === 'lost') { headline = 'Link dropped'; detail = 'Trying to reconnect\u2026'; }
+  if (m.stage === 'error') {
+    headline = 'Not connected';
+    detail = esc(m.message || '');
+    actions = `<button class="neon" data-act="retry">Retry</button>` +
+              (m.code && Net.st.mode === 'host' ? shareBtns : '') +
+              `<button class="neon quiet" data-act="local">Play on one screen instead</button>`;
+  }
+
+  box.className = 'status' + (m.stage === 'error' ? ' error' : '');
+  box.innerHTML = `<ol class="steps">${li}</ol>` +
+                  (headline ? `<div class="headline">${headline}</div>` : '') +
+                  (detail ? `<div class="detail">${detail}</div>` : '') +
+                  (actions ? `<div class="actions">${actions}</div>` : '');
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* fall through */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select(); const ok = document.execCommand('copy'); ta.remove();
+    return ok;
+  } catch (e) { return false; }
+}
+
+function toast(msg) {
+  const d = el['lobby-status'].querySelector('.detail');
+  if (d) d.innerHTML = `<b>${esc(msg)}</b>`;
 }
 
 function startGame(names) {
@@ -977,37 +1178,37 @@ function startGame(names) {
 }
 
 function bindNet() {
-  Net.on('status', msg => {
-    if (msg === 'connected') {
+  Net.on('status', m => {
+    const inGame = !!State && !el.game.classList.contains('hidden') || (!!State && !el.over.classList.contains('hidden'));
+    if (m.stage === 'connected') {
       Audio.play('connect');
       if (Net.st.mode === 'guest') {
         Net.send({ t: 'join', name: myName() });
-        setLobbyStatus('Connected. Waiting for the host to deal you in\u2026');
-      } else {
-        setLobbyStatus('Opponent connected. Starting\u2026');
+        Session.save({ mode: 'guest', code: Net.st.code, name: myName() });
       }
-      return;
     }
-    setLobbyStatus(msg);
+    if (m.stage === 'error' || m.stage === 'lost') Audio.play('error');
+    if (inGame) {
+      const [cls, text] = connLine(m);
+      setConn(cls, text);
+      if (m.stage === 'lost' && Net.st.mode === 'guest') setTimeout(() => Net.retry(), Net.tune.rejoinMs);   // guest reconnects itself
+      if (m.stage === 'lost' || m.stage === 'connected') Voice.speak(m.stage === 'lost' ? 'Connection lost.' : 'Reconnected.', { interrupt: true });
+    } else {
+      renderStatus(m);
+    }
   });
-  Net.on('error', msg => { Audio.play('error'); setLobbyStatus(msg, true); });
-  Net.on('closed', () => {
-    el.conn.textContent = 'Opponent disconnected';
-    el.conn.classList.add('lost');
-    Voice.speak('Connection lost.', { interrupt: true });
-  });
+  Net.on('closed', () => { /* stage 'lost' is reported through status */ });
   Net.on('message', m => {
     if (!m || typeof m !== 'object') return;
     if (Net.st.mode === 'host') {
       if (m.t === 'join') {
-        el.conn.textContent = `Online \u00b7 room ${Net.st.code}`;
-        el.conn.classList.remove('lost');
-        if (State && State.phase === 'playing') {
+        if (State && State.phase !== 'over') {
           State.players[1].name = cleanName(m.name) || State.players[1].name;
           commit(State);                       // resume: resend current state
         } else {
           startGame([myName(), cleanName(m.name) || 'Player 2']);
         }
+        setConn('ok', `Linked with ${State.players[1].name}`);
       } else if (m.t === 'action' && State) {
         const r = applyAction(State, m.action, 1);
         if (!r.ok) Net.send({ t: 'deny', error: r.error });
@@ -1015,10 +1216,10 @@ function bindNet() {
       }
     } else if (Net.st.mode === 'guest') {
       if (m.t === 'state') {
-        if (!State) el.conn.textContent = `Online \u00b7 room ${Net.st.code}`;
         State = m.state;
         render();
         react();
+        setConn('ok', `Linked with ${State.players[0].name}`);
       } else if (m.t === 'deny') {
         Audio.play('error');
         render();            // re-enable anything the tap disabled
@@ -1029,15 +1230,54 @@ function bindNet() {
 }
 
 function bindUI() {
-  el['btn-local'].addEventListener('click', () => {
+  const startLocal = () => {
     Audio.ensure();
     Net.teardown();
     Net.st.mode = 'local';
-    el.conn.textContent = 'Same screen';
+    Session.clear();
+    setConn('', 'Same screen');
     startGame([myName() === 'Player' ? 'Player 1' : myName(), 'Player 2']);
-  });
+  };
+  el['btn-local'].addEventListener('click', startLocal);
   el['btn-host'].addEventListener('click', () => { Audio.ensure(); Net.host(); });
   el['btn-join'].addEventListener('click', () => { Audio.ensure(); Net.join(el.code.value); });
+
+  el['lobby-status'].addEventListener('click', async e => {
+    const b = e.target.closest('button[data-act]');
+    if (!b) return;
+    const act = b.dataset.act, code = Net.st.code || '';
+    if (act === 'retry') Net.retry();
+    else if (act === 'local') startLocal();
+    else if (act === 'copy') toast((await copyText(code)) ? `Copied ${code}` : `Select the code and copy it: ${code}`);
+    else if (act === 'share') {
+      const url = shareLink(code);
+      try {
+        if (navigator.share) { await navigator.share({ title: 'Neon Yahtzee', text: `Join my Neon Yahtzee room ${code}`, url }); return; }
+      } catch (err) { if (err && err.name === 'AbortError') return; }
+      toast((await copyText(url)) ? 'Link copied' : 'Select the link below and copy it');
+    }
+  });
+
+  el.resume.addEventListener('click', e => {
+    const b = e.target.closest('button[data-act]');
+    if (!b) return;
+    const sv = Session.load();
+    el.resume.classList.add('hidden');
+    if (b.dataset.act === 'forget' || !sv) { Session.clear(); return; }
+    Audio.ensure();
+    if (sv.name) el.name.value = sv.name;
+    if (sv.mode === 'host' && sv.state) {
+      State = sv.state; announcedSeq = State.seq;
+      render();
+      setConn('warn', `Room ${sv.code} · waiting for ${State.players[1].name} to rejoin`);
+      Net.host(sv.code);
+    } else {
+      el.code.value = sv.code;
+      Net.join(sv.code);
+    }
+  });
+
+  el.conn.addEventListener('click', () => { if (Net.st.stage === 'error') Net.retry(); });
   el.code.addEventListener('keydown', e => { if (e.key === 'Enter') el['btn-join'].click(); });
   el.code.addEventListener('input', () => { el.code.value = el.code.value.toUpperCase(); });
 
@@ -1099,7 +1339,7 @@ function bindUI() {
 function init() {
   ['lobby', 'game', 'over', 'dice', 'demo-dice', 'card-upper', 'card-lower', 'combo', 'turn', 'conn', 'rolls',
    'hint', 'ticker', 'lobby-status', 'name', 'code', 'btn-host', 'btn-join', 'btn-local', 'btn-roll',
-   'btn-rematch', 'btn-music', 'btn-voice', 'btn-sfx', 'over-title', 'over-score', 'waves', 'fx']
+   'btn-rematch', 'btn-music', 'btn-voice', 'btn-sfx', 'over-title', 'over-score', 'waves', 'fx', 'resume']
     .forEach(id => { el[id] = document.getElementById(id); });
 
   Voice.init();
@@ -1109,8 +1349,28 @@ function init() {
   bindNet();
   bindUI();
   if (!Net.available()) {
-    setLobbyStatus('Online play is unavailable right now (PeerJS did not load). Same-screen play still works.', true);
+    renderStatus({ stage: 'error', mode: 'guest', message: 'Online play is unavailable right now (PeerJS did not load).' });
   }
+
+  const sv = Session.load();
+  if (sv && sv.code && (sv.mode === 'guest' || (sv.state && sv.state.phase !== 'over'))) {
+    if (sv.name) el.name.value = sv.name;
+    el.resume.innerHTML = (sv.mode === 'host'
+      ? `You were hosting room <b>${esc(sv.code)}</b> — your game is saved.`
+      : `You were in room <b>${esc(sv.code)}</b>.`) +
+      `<div class="actions"><button class="neon" data-act="resume">${sv.mode === 'host' ? 'Reopen room and resume' : 'Rejoin'}</button>` +
+      `<button class="neon quiet" data-act="forget">Start fresh</button></div>`;
+    el.resume.classList.remove('hidden');
+  }
+
+  const fromUrl = roomFromUrl();
+  if (fromUrl && !(sv && sv.code === fromUrl)) {
+    el.code.value = fromUrl;
+    renderStatus(`Room code ${fromUrl} filled in from your link. Enter your name and tap Join.`);
+    el.name.focus();
+  }
+
+  window.NeonYahtzee = { Net, Session };   // for debugging in the console
 }
 
 if (typeof module !== 'undefined' && module.exports) {
