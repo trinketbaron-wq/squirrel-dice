@@ -57,13 +57,13 @@ button:focus-visible, input:focus-visible, .die:focus-visible {
 .sun {
   position: absolute;
   left: 50%;
-  top: 40px;
-  width: 300px;
-  height: 300px;
-  margin-left: -150px;
+  top: -70px;
+  width: 260px;
+  height: 260px;
+  margin-left: -130px;
   border-radius: 50%;
   background: radial-gradient(circle at 50% 40%, #ffe98a 0%, var(--gold) 35%, #ff6ad5 70%, var(--magenta) 100%);
-  opacity: 0.55;
+  opacity: 0.45;
   filter: blur(0.5px);
   box-shadow: 0 0 80px 20px rgba(255, 43, 214, 0.25);
 }
@@ -174,8 +174,23 @@ button:focus-visible, input:focus-visible, .die:focus-visible {
   background: transparent;
   border: 0;
   color: var(--magenta);
-  filter: drop-shadow(0 0 5px currentColor) drop-shadow(0 0 14px rgba(255, 43, 214, 0.4));
+  filter: drop-shadow(0 0 6px currentColor) drop-shadow(0 0 18px rgba(255, 43, 214, 0.55));
   transition: transform 140ms, color 140ms, filter 140ms;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.die .face { fill: #0a0326; }
+.die .pip  { fill: currentColor; fill-opacity: 0.55; }
+
+.stage {
+  margin-top: 14px;
+  padding: 10px 8px 4px;
+  border-radius: 12px;
+  background: rgba(6, 0, 26, 0.82);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  box-shadow: 0 0 0 1px var(--hair), 0 0 40px rgba(6, 0, 26, 0.9);
 }
 
 .die svg {
@@ -190,8 +205,9 @@ button:focus-visible, input:focus-visible, .die:focus-visible {
 
 .die.held {
   color: var(--cyan);
-  filter: drop-shadow(0 0 6px currentColor) drop-shadow(0 0 18px rgba(34, 240, 255, 0.5));
+  filter: drop-shadow(0 0 8px currentColor) drop-shadow(0 0 22px rgba(34, 240, 255, 0.6));
 }
+.die.held .face { fill: #06202a; }
 
 .die .tag {
   position: absolute;
@@ -217,11 +233,13 @@ button:focus-visible, input:focus-visible, .die:focus-visible {
   100% { transform: translate(-1px, 2px) rotate(-3deg); }
 }
 
-.dice-row.demo .die { color: var(--violet); opacity: 0.7; }
+.dice-row.demo .die { color: var(--magenta); opacity: 0.6; }
 
 /* ---------- Buttons ---------- */
 
 .neon {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
   background: transparent;
   border: 2px solid var(--cyan);
   border-radius: 6px;
@@ -401,7 +419,7 @@ input:focus {
 }
 
 .ticker {
-  margin: 6px 0 14px;
+  margin: 6px 0 0;
   padding: 10px 14px;
   border-top: 1px solid var(--hair);
   border-bottom: 1px solid var(--hair);
@@ -424,8 +442,13 @@ input:focus {
 
 .card {
   width: 100%;
+  margin-top: 14px;
   border-collapse: collapse;
   font-size: 16px;
+  background: rgba(6, 0, 26, 0.78);
+  box-shadow: 0 0 0 1px var(--hair);
+  border-radius: 12px;
+  overflow: hidden;
 }
 
 .card th, .card td {
@@ -468,22 +491,40 @@ input:focus {
 
 .card td.n.zero { color: var(--dim); }
 
-.card td.n.open {
-  color: rgba(255, 43, 214, 0.55);
-  cursor: pointer;
-  transition: background 100ms, color 100ms, text-shadow 100ms;
-}
+.card td.n.open { padding-top: 4px; padding-bottom: 4px; }
 
-.card td.n.open:hover,
-.card td.n.open:focus-visible {
-  background: rgba(255, 43, 214, 0.14);
+.pick {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  min-width: 64px;
+  height: 40px;
+  padding: 0 12px;
+  border: 2px solid var(--magenta);
+  border-radius: 8px;
+  background: rgba(255, 43, 214, 0.1);
+  font-family: var(--mono);
+  font-size: 19px;
   color: #fff;
-  text-shadow: 0 0 8px var(--magenta), 0 0 18px var(--magenta);
+  text-shadow: 0 0 8px var(--magenta);
+  box-shadow: 0 0 10px rgba(255, 43, 214, 0.45), inset 0 0 8px rgba(255, 43, 214, 0.2);
+  transition: transform 80ms, box-shadow 80ms, background 80ms;
 }
 
-.card td.n.open.forced {
+.pick:hover, .pick:focus-visible {
+  background: rgba(255, 43, 214, 0.25);
+  box-shadow: 0 0 20px rgba(255, 43, 214, 0.8), inset 0 0 12px rgba(255, 43, 214, 0.3);
+}
+
+.pick:active { transform: scale(0.94); }
+
+.pick[disabled] { opacity: 0.5; }
+
+.pick.forced {
+  border-color: var(--gold);
   color: var(--gold);
-  text-shadow: 0 0 8px rgba(255, 207, 63, 0.7);
+  background: rgba(255, 207, 63, 0.1);
+  text-shadow: 0 0 8px rgba(255, 207, 63, 0.8);
+  box-shadow: 0 0 10px rgba(255, 207, 63, 0.5), inset 0 0 8px rgba(255, 207, 63, 0.2);
 }
 
 .card td.n.big {
@@ -515,6 +556,34 @@ input:focus {
   font-size: 12px;
   letter-spacing: 0.14em;
   color: var(--dim);
+}
+
+/* ---------- Tap waves ---------- */
+
+#app { position: relative; }
+
+#waves {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  overflow: visible;
+}
+
+.wave {
+  position: absolute;
+  border: 2px solid var(--wave, var(--cyan));
+  border-radius: 12px;
+  box-shadow: 0 0 10px var(--wave, var(--cyan)), inset 0 0 10px var(--wave, var(--cyan));
+  transform: translate(-50%, -50%) scale(1);
+  opacity: 0.9;
+  animation: wave 650ms cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+}
+
+.wave.round { border-radius: 50%; }
+
+@keyframes wave {
+  to { transform: translate(-50%, -50%) scale(2.4); opacity: 0; }
 }
 
 /* ---------- Game over ---------- */
@@ -549,10 +618,13 @@ input:focus {
   .card th, .card td { padding: 6px 6px; }
   .card td .how { display: none; }
   .neon.roll { padding: 12px 30px; }
+  .pick { min-width: 56px; height: 38px; padding: 0 8px; font-size: 17px; }
+  .stage { padding: 6px 2px 2px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .grid { animation: none; }
+  .wave { animation-duration: 200ms; }
   .die.rolling { animation: none; }
   .ticker::after { animation: none; }
 }

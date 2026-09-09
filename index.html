@@ -14,6 +14,7 @@
 </head>
 <body>
 <div id="app">
+  <div id="waves" aria-hidden="true"></div>
   <div class="horizon" aria-hidden="true">
     <div class="sun"></div>
     <div class="grid"></div>
@@ -52,13 +53,15 @@
       <div id="turn" class="turn"></div>
       <div id="conn" class="conn"></div>
     </div>
-    <div class="dice-row" id="dice"></div>
-    <div class="controls">
-      <button id="btn-roll" class="neon roll">Roll</button>
-      <div id="rolls" class="rolls" aria-label="Rolls left"></div>
-      <div id="hint" class="hint"></div>
+    <div class="stage">
+      <div class="dice-row" id="dice"></div>
+      <div class="controls">
+        <button id="btn-roll" class="neon roll">Roll</button>
+        <div id="rolls" class="rolls" aria-label="Rolls left"></div>
+        <div id="hint" class="hint"></div>
+      </div>
+      <div id="ticker" class="ticker" aria-live="polite"></div>
     </div>
-    <div id="ticker" class="ticker" aria-live="polite"></div>
     <table id="card" class="card"></table>
   </section>
 

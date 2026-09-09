@@ -560,9 +560,26 @@ const PIPS = {
 
 function dieSVG(v) {
   const pips = PIPS[v].map(([x, y]) =>
-    `<circle cx="${x}" cy="${y}" r="8.5" fill="currentColor" fill-opacity="0.18" stroke="currentColor" stroke-width="3"/>`).join('');
+    `<circle class="pip" cx="${x}" cy="${y}" r="9" stroke="currentColor" stroke-width="3"/>`).join('');
   return `<svg viewBox="0 0 100 100" aria-hidden="true">` +
-         `<rect x="5" y="5" width="90" height="90" rx="18" fill="none" stroke="currentColor" stroke-width="3.5"/>${pips}</svg>`;
+         `<rect class="face" x="5" y="5" width="90" height="90" rx="18" stroke="currentColor" stroke-width="4"/>${pips}</svg>`;
+}
+
+/* Sonar rings centred on an element. Drawn in #waves (an overlay), so the
+   board re-rendering underneath doesn't wipe them out. */
+function pulse(target, color = 'var(--cyan)', round = false) {
+  if (!target || !el.waves) return;
+  const r = target.getBoundingClientRect(), a = el.waves.getBoundingClientRect();
+  if (!r.width) return;
+  const cx = r.left - a.left + r.width / 2, cy = r.top - a.top + r.height / 2;
+  for (let i = 0; i < 3; i++) {
+    const w = document.createElement('span');
+    w.className = 'wave' + (round ? ' round' : '');
+    w.style.cssText = `left:${cx}px;top:${cy}px;width:${r.width + 8}px;height:${r.height + 8}px;` +
+                      `--wave:${color};animation-delay:${i * 110}ms`;
+    el.waves.appendChild(w);
+    setTimeout(() => w.remove(), 900 + i * 110);
+  }
 }
 
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -697,8 +714,8 @@ function renderCard() {
     }
     if (p === s.current && av.keys.includes(c.key)) {
       const pts = scoreFor(c.key, s.dice, pl);
-      return `<td class="n open${av.forced ? ' forced' : ''}" data-key="${c.key}" tabindex="0" role="button"` +
-             ` aria-label="Score ${pts} in ${c.label}">${pts}</td>`;
+      return `<td class="n open"><button class="pick${av.forced ? ' forced' : ''}" data-key="${c.key}"` +
+             ` aria-label="Score ${pts} in ${c.label}">${pts}</button></td>`;
     }
     return '<td class="n"></td>';
   };
@@ -782,6 +799,7 @@ function bindNet() {
         react();
       } else if (m.t === 'deny') {
         Audio.play('error');
+        render();            // re-enable anything the tap disabled
         flash(m.error);
       }
     }
@@ -801,21 +819,27 @@ function bindUI() {
   el.code.addEventListener('keydown', e => { if (e.key === 'Enter') el['btn-join'].click(); });
   el.code.addEventListener('input', () => { el.code.value = el.code.value.toUpperCase(); });
 
-  el['btn-roll'].addEventListener('click', () => dispatch({ type: 'roll' }));
+  el['btn-roll'].addEventListener('click', () => {
+    pulse(el['btn-roll'], 'var(--magenta)');
+    dispatch({ type: 'roll' });
+  });
   el.dice.addEventListener('click', e => {
     const b = e.target.closest('.die');
-    if (b && !b.disabled) dispatch({ type: 'hold', i: Number(b.dataset.i) });
+    if (!b || b.disabled) return;
+    pulse(b, b.classList.contains('held') ? 'var(--magenta)' : 'var(--cyan)');
+    dispatch({ type: 'hold', i: Number(b.dataset.i) });
   });
   el.card.addEventListener('click', e => {
-    const td = e.target.closest('td.open');
-    if (td) dispatch({ type: 'score', key: td.dataset.key });
+    const b = e.target.closest('button.pick');
+    if (!b || b.disabled) return;
+    pulse(b, b.classList.contains('forced') ? 'var(--gold)' : 'var(--magenta)');
+    el.card.querySelectorAll('button.pick').forEach(x => { x.disabled = true; });  // one tap, one score
+    dispatch({ type: 'score', key: b.dataset.key });
   });
-  el.card.addEventListener('keydown', e => {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    const td = e.target.closest('td.open');
-    if (td) { e.preventDefault(); dispatch({ type: 'score', key: td.dataset.key }); }
+  el['btn-rematch'].addEventListener('click', () => {
+    pulse(el['btn-rematch'], 'var(--gold)');
+    dispatch({ type: 'rematch' });
   });
-  el['btn-rematch'].addEventListener('click', () => dispatch({ type: 'rematch' }));
 
   document.addEventListener('keydown', e => {
     if (e.target.tagName === 'INPUT' || el.game.classList.contains('hidden')) return;
@@ -849,7 +873,7 @@ function bindUI() {
 function init() {
   ['lobby', 'game', 'over', 'dice', 'demo-dice', 'card', 'turn', 'conn', 'rolls', 'hint', 'ticker',
    'lobby-status', 'name', 'code', 'btn-host', 'btn-join', 'btn-local', 'btn-roll', 'btn-rematch',
-   'btn-music', 'btn-voice', 'btn-sfx', 'over-title', 'over-score']
+   'btn-music', 'btn-voice', 'btn-sfx', 'over-title', 'over-score', 'waves']
     .forEach(id => { el[id] = document.getElementById(id); });
 
   Voice.init();
